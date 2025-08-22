@@ -52,13 +52,38 @@ interface Category {
   updatedAt: string;
 }
 
+// SourceCode types
+interface SourceCode {
+  _id: string;
+  name: string;
+  price: number;
+  discountPercent: number;
+  discountedPrice: number;
+  thumbnailImage?: string;
+  videoPreview?: string[];
+  videoTutorial?: string[];
+  imagePreview?: string[];
+  policy?: string[];
+  description?: string[];
+  sourceCodeFile: string;
+  slug: string;
+  isActive: boolean;
+  downloadCount: number;
+  viewCount: number;
+  tags?: string[];
+  category?: string[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Generic API call function
 async function apiCall<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
-  
+
   const defaultHeaders: Record<string, string> = {};
 
   // Only set Content-Type if not FormData (let browser set it for FormData)
@@ -66,13 +91,21 @@ async function apiCall<T>(
     defaultHeaders['Content-Type'] = 'application/json';
   }
 
-  // Add authorization token if available
-  const token = localStorage.getItem('token');
-  if (token) {
-    defaultHeaders['Authorization'] = `Bearer ${token}`;
+  // Add authorization token if available (guard for SSR)
+  try {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (token) {
+      defaultHeaders['Authorization'] = `Bearer ${token}`;
+    }
+  } catch (_) {
+    // ignore
   }
 
   const config: RequestInit = {
+    // ensure CORS
+    mode: 'cors',
+    // Using Authorization header, no cookies needed
+    credentials: 'omit',
     ...options,
     headers: {
       ...defaultHeaders,
@@ -82,16 +115,37 @@ async function apiCall<T>(
 
   try {
     const response = await fetch(url, config);
-    const data = await response.json();
 
-    if (!response.ok) {
-      throw new Error(data.message || `HTTP error! status: ${response.status}`);
+    // If no content
+    const contentType = response.headers.get('content-type') || '';
+    let data: any = null;
+    if (contentType.includes('application/json')) {
+      data = await response.json();
+    } else if (contentType) {
+      // attempt to parse text for better error messages
+      const text = await response.text();
+      try { data = JSON.parse(text); } catch { data = { message: text }; }
     }
 
-    return data;
-  } catch (error) {
-    console.error('API call failed:', error);
-    throw error;
+    if (!response.ok) {
+      const message = (data && data.message) ? data.message : `HTTP error! status: ${response.status}`;
+      const err: ApiError = { message, status: response.status };
+      throw err;
+    }
+
+    return (data as T);
+  } catch (error: any) {
+    // Network errors often show up here
+    console.error('API call failed:', {
+      endpoint: url,
+      method: (config.method || 'GET'),
+      error: error?.message || error,
+    });
+    // Re-throw a normalized error
+    if (error && typeof error === 'object' && 'message' in error) {
+      throw error;
+    }
+    throw { message: 'Network error. Please try again.' } as ApiError;
   }
 }
 
@@ -135,18 +189,13 @@ export const authApi = {
 // Account API
 export const accountApi = {
   getAll: async (page?: number, limit?: number, search?: string, category?: string): Promise<ApiResponse<{ accounts?: Account[]; items?: Account[]; count?: number; pagination?: any; total?: number; totalPages?: number }>> => {
-    let url = '/api/account/getall';
     const params = new URLSearchParams();
-    
     if (page) params.append('page', page.toString());
     if (limit) params.append('limit', limit.toString());
     if (search) params.append('search', search);
-    if (category && category !== 'all') params.append('category', category);
-    
-    if (params.toString()) {
-      url += `?${params.toString()}`;
-    }
-    
+    if (category) params.append('category', category);
+    const queryString = params.toString();
+    const url = `/api/account/getall${queryString ? `?${queryString}` : ''}`;
     return apiCall(url);
   },
 
@@ -157,7 +206,6 @@ export const accountApi = {
   create: async (accountData: FormData): Promise<ApiResponse<Account>> => {
     return apiCall('/api/account/create', {
       method: 'POST',
-      headers: {}, // Remove Content-Type to let browser set it for FormData
       body: accountData,
     });
   },
@@ -165,7 +213,6 @@ export const accountApi = {
   update: async (id: string, accountData: FormData): Promise<ApiResponse<Account>> => {
     return apiCall(`/api/account/update/${id}`, {
       method: 'PUT',
-      headers: {}, // Remove Content-Type to let browser set it for FormData
       body: accountData,
     });
   },
@@ -182,32 +229,23 @@ export const fileApi = {
   uploadSingle: async (file: File): Promise<ApiResponse<{ fileId: string; filename: string }>> => {
     const formData = new FormData();
     formData.append('file', file);
-    
     return apiCall('/api/files/upload/single', {
       method: 'POST',
-      headers: {}, // Remove Content-Type to let browser set it for FormData
       body: formData,
     });
   },
 
   uploadMultiple: async (files: File[]): Promise<ApiResponse<{ files: Array<{ fileId: string; filename: string }> }>> => {
     const formData = new FormData();
-    files.forEach(file => {
-      formData.append('files', file);
-    });
-    
+    files.forEach((file) => formData.append('files', file));
     return apiCall('/api/files/upload/multiple', {
       method: 'POST',
-      headers: {}, // Remove Content-Type to let browser set it for FormData
       body: formData,
     });
   },
 
   getFile: async (id: string): Promise<Blob> => {
     const response = await fetch(`${API_BASE_URL}/api/files/${id}`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch file: ${response.statusText}`);
-    }
     return response.blob();
   },
 
@@ -229,10 +267,13 @@ export const fileApi = {
 // User API
 export const userApi = {
   getAll: async (page: number = 1, limit: number = 10, search?: string, role?: string): Promise<ApiResponse<{ users: User[]; pagination: { page: number; limit: number; total: number; totalPages: number } }>> => {
-    let url = `/api/user/getall?page=${page}&limit=${limit}`;
-    if (search) url += `&search=${encodeURIComponent(search)}`;
-    if (role && role !== 'all') url += `&role=${role}`;
-    
+    const params = new URLSearchParams();
+    params.append('page', page.toString());
+    params.append('limit', limit.toString());
+    if (search) params.append('search', search);
+    if (role) params.append('role', role);
+    const queryString = params.toString();
+    const url = `/api/user/getall${queryString ? `?${queryString}` : ''}`;
     return apiCall(url);
   },
 
@@ -269,7 +310,6 @@ export const categoryApi = {
     if (limit) params.append('limit', limit.toString());
     if (search) params.append('search', search);
     if (isActive !== undefined) params.append('isActive', isActive.toString());
-    
     const queryString = params.toString();
     return apiCall(
       `/api/category/getall${queryString ? `?${queryString}` : ''}`
@@ -309,5 +349,66 @@ export const categoryApi = {
   },
 };
 
+// SourceCode API
+export const sourceCodeApi = {
+  getAll: async (page?: number, limit?: number, search?: string, category?: string, tags?: string, isActive?: boolean, createdBy?: string, sortBy?: string, sortOrder?: string): Promise<ApiResponse<{ data?: SourceCode[]; items?: SourceCode[]; count?: number; pagination?: any; total?: number; totalPages?: number }>> => {
+    const params = new URLSearchParams();
+    if (page) params.append('page', page.toString());
+    if (limit) params.append('limit', limit.toString());
+    if (search) params.append('search', search);
+    if (category) params.append('category', category);
+    if (tags) params.append('tags', tags);
+    if (isActive !== undefined) params.append('isActive', isActive.toString());
+    if (createdBy) params.append('createdBy', createdBy);
+    if (sortBy) params.append('sortBy', sortBy);
+    if (sortOrder) params.append('sortOrder', sortOrder);
+    
+    const queryString = params.toString();
+    return apiCall(
+      `/api/sourcecode/getall${queryString ? `?${queryString}` : ''}`
+    );
+  },
+
+  getById: async (id: string): Promise<ApiResponse<SourceCode>> => {
+    return apiCall(`/api/sourcecode/get/${id}`);
+  },
+
+  getBySlug: async (slug: string): Promise<ApiResponse<SourceCode>> => {
+    return apiCall(`/api/sourcecode/slug/${slug}`);
+  },
+
+  create: async (sourceCodeData: FormData): Promise<ApiResponse<SourceCode>> => {
+    return apiCall('/api/sourcecode/create', {
+      method: 'POST',
+      body: sourceCodeData,
+    });
+  },
+
+  update: async (id: string, sourceCodeData: FormData): Promise<ApiResponse<SourceCode>> => {
+    return apiCall(`/api/sourcecode/update/${id}`, {
+      method: 'PUT',
+      body: sourceCodeData,
+    });
+  },
+
+  delete: async (id: string): Promise<ApiResponse> => {
+    return apiCall(`/api/sourcecode/delete/${id}`, {
+      method: 'DELETE',
+    });
+  },
+
+  incrementView: async (id: string): Promise<ApiResponse> => {
+    return apiCall(`/api/sourcecode/view/${id}`, {
+      method: 'PATCH',
+    });
+  },
+
+  incrementDownload: async (id: string): Promise<ApiResponse> => {
+    return apiCall(`/api/sourcecode/download/${id}`, {
+      method: 'PATCH',
+    });
+  },
+};
+
 // Export types
-export type { User, Account, Category, ApiResponse, ApiError };
+export type { User, Account, Category, SourceCode, ApiResponse, ApiError };

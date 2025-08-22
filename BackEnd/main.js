@@ -5,6 +5,7 @@ const authenticator = require('./src/routes/auth.routes');
 const accountRouter = require('./src/routes/account.routes');
 const userRouter = require('./src/routes/user.routes');
 const categoryRouter = require('./src/routes/category.routes');
+const sourceCodeRouter = require('./src/routes/sourceCode.routes');
 const { swaggerUi, specs } = require('./src/config/swagger');
 
 const connectDB = require('./src/config/database');
@@ -15,12 +16,16 @@ const PORT = process.env.PORT;
 const app = express();
 
 // CORS configuration
-app.use(cors({
+const corsOptions = {
   origin: ['http://localhost:3000', 'http://192.168.1.166:3000'],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
+};
+app.use(cors(corsOptions));
+// Explicitly handle preflight requests for all routes
+app.options('*', cors(corsOptions));
 
 app.use('/public',express.static(path.join(__dirname,'public')));
 
@@ -39,6 +44,7 @@ app.use('/api/auth',authenticator);
 app.use('/api/account',accountRouter);
 app.use('/api/user',userRouter);
 app.use('/api/category',categoryRouter);
+app.use('/api/sourcecode',sourceCodeRouter);
 app.use('/api/files', require('./src/routes/file.routes'));
 
 // Default route to redirect to API documentation

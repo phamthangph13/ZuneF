@@ -78,7 +78,7 @@ const getUserSidebarItems = (userRole: string) => {
     },
     {
       title: "Quản lý Source Code",
-      href: "/admin/source-code",
+      href: "/admin/sourcecodes",
       icon: Code,
     },
     {
